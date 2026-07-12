@@ -2,6 +2,9 @@
 
 LevelDB key/value database implementation in pure V. Uses zlib/deflate block compression instead of snappy, matching the format used by Minecraft Bedrock worlds.
 
+> [!NOTE]
+> This implementation is a V port derived from [`df-mc/goleveldb`](https://github.com/df-mc/goleveldb), which is itself a fork of [`syndtr/goleveldb`](https://github.com/syndtr/goleveldb).
+
 ## Features
 
 - Log-structured merge tree with 7 levels
