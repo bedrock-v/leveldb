@@ -1,6 +1,6 @@
 # leveldb
 
-LevelDB key/value database implementation in pure V, inspired by [df-mc/goleveldb](https://github.com/df-mc/goleveldb). Uses zlib/deflate block compression instead of snappy, matching the format used by Minecraft Bedrock worlds.
+LevelDB key/value database implementation in pure V. Uses zlib/deflate block compression instead of snappy, matching the format used by Minecraft Bedrock worlds.
 
 ## Features
 
