@@ -12,8 +12,8 @@ permissions:
 # Kept in step with ci.yml: bump both pins together.
 env:
   VFLAGS: -no-parallel
-  V_REF: 0e9344acd79e94a84ffeab703ace741fcd3868a4
-  VC_REF: 2cbaf6bc2367937cd5f0b4ef923d1ef9aad613b3
+  V_REF: 0c3837b57f9b81a691c6b3afc38dd1f2f13191de
+  VC_REF: 8af812feb76c678abd86a8e682fd9ab2790e519c
 
 jobs:
   verify:
