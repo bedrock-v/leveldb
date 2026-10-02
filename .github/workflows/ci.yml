@@ -17,7 +17,7 @@ concurrency:
 
 env:
   VFLAGS: -no-parallel
-  V_REF: 0c3837b57f9b81a691c6b3afc38dd1f2f13191de
+  V_REF: b4c5f575ffc420f248d00692271ed6c818a0e92d
   VC_REF: 8af812feb76c678abd86a8e682fd9ab2790e519c
 
 jobs:
