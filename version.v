@@ -1,6 +1,10 @@
 module leveldb
 
 import os
+import leveldb.internal.coding { append_uvarint, read_uvarint }
+import leveldb.internal.fs { sync_dir, write_file_synced }
+import leveldb.internal.journal { JournalEnd, JournalTornTail, JournalWriter, new_journal_reader, new_journal_writer }
+import leveldb.internal.internalkey { compare_internal }
 
 const num_levels = 7
 
@@ -173,7 +177,13 @@ fn decode_version_edit(data []u8) !VersionEdit {
 
 struct Version {
 mut:
-	levels [][]TableFile = [][]TableFile{len: num_levels}
+	levels [][]TableFile
+}
+
+fn new_version() &Version {
+	return &Version{
+		levels: [][]TableFile{len: num_levels}
+	}
 }
 
 struct VersionSet {
@@ -183,9 +193,18 @@ mut:
 	current      &Version
 	manifest     &JournalWriter = unsafe { nil }
 	manifest_num u64
-	next_file    u64 = 2
+	next_file    u64
 	journal_num  u64
 	last_seq     u64
+}
+
+fn new_version_set(dir string, opts Options) &VersionSet {
+	return &VersionSet{
+		dir:       dir
+		opts:      opts
+		current:   new_version()
+		next_file: 2
+	}
 }
 
 fn (mut vs VersionSet) new_file_num() u64 {
@@ -205,7 +224,7 @@ fn (mut vs VersionSet) mark_file_num_used(num u64) {
 }
 
 fn (mut vs VersionSet) apply(edit VersionEdit) {
-	mut v := &Version{}
+	mut v := new_version()
 	for i in 0 .. num_levels {
 		v.levels[i] = vs.current.levels[i].clone()
 	}

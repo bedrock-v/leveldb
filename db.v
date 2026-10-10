@@ -1,6 +1,12 @@
 module leveldb
 
 import os
+import leveldb.internal.blockfmt { BlockEntry }
+import leveldb.internal.fs { DBLock, acquire_db_lock, sync_dir }
+import leveldb.internal.internalkey
+import leveldb.internal.journal { JournalEnd, JournalTornTail, JournalWriter, new_journal_reader, new_journal_writer }
+import leveldb.internal.memdb { MemDB, new_memdb }
+import leveldb.internal.table { TableReader, TableWriter, new_table_reader, new_table_writer }
 
 pub struct DB {
 	dir  string
@@ -40,11 +46,7 @@ fn open_locked(dir string, opts Options, db_lock DBLock) !&DB {
 	if !current_exists && !opts.create_if_missing {
 		return error('leveldb: database is missing CURRENT file: ${dir}')
 	}
-	mut vs := &VersionSet{
-		dir:     dir
-		opts:    opts
-		current: &Version{}
-	}
+	mut vs := new_version_set(dir, opts)
 	mut mem := new_memdb()
 	if current_exists {
 		vs.recover()!
@@ -113,8 +115,8 @@ fn (mut db DB) replay_journals() ! {
 				return error('leveldb: ${name}: malformed batch: ${err}')
 			}
 			mut seq := batch.seq()
-			batch.each(fn [mut db, mut seq] (kt KeyType, key []u8, value []u8) ! {
-				db.mem.put(make_internal_key(key, seq, kt), value.clone())
+			batch.each(fn [mut db, mut seq] (kt internalkey.KeyType, key []u8, value []u8) ! {
+				db.mem.put(internalkey.make_internal_key(key, seq, kt), value.clone())
 				seq++
 			}) or { return error('leveldb: ${name}: malformed batch: ${err}') }
 			end_seq := batch.seq() + u64(batch.count) - 1
@@ -165,8 +167,8 @@ pub fn (mut db DB) write(mut b Batch, wo WriteOptions) ! {
 		db.journal.flush()!
 	}
 	mut cur := seq
-	b.each(fn [mut db, mut cur] (kt KeyType, key []u8, value []u8) ! {
-		db.mem.put(make_internal_key(key, cur, kt), value.clone())
+	b.each(fn [mut db, mut cur] (kt internalkey.KeyType, key []u8, value []u8) ! {
+		db.mem.put(internalkey.make_internal_key(key, cur, kt), value.clone())
 		cur++
 	})!
 	db.vs.last_seq = seq + u64(b.count) - 1
@@ -194,7 +196,7 @@ pub fn (mut db DB) get(key []u8, ro ReadOptions) !Lookup {
 	if db.closed {
 		return error('leveldb: database is closed')
 	}
-	ikey := make_internal_key(key, max_seq, key_type_seek)
+	ikey := internalkey.make_internal_key(key, internalkey.max_seq, internalkey.key_type_seek)
 	if value, kt := db.mem.get(ikey) {
 		if kt == .del {
 			return Lookup{}
@@ -205,10 +207,10 @@ pub fn (mut db DB) get(key []u8, ro ReadOptions) !Lookup {
 		}
 	}
 	for f in db.vs.current.levels[0] {
-		if compare_bytes(key, internal_ukey(f.smallest)) < 0 {
+		if internalkey.compare_bytes(key, internalkey.internal_ukey(f.smallest)) < 0 {
 			continue
 		}
-		if compare_bytes(key, internal_ukey(f.largest)) > 0 {
+		if internalkey.compare_bytes(key, internalkey.internal_ukey(f.largest)) > 0 {
 			continue
 		}
 		tr := db.table(f.num)!
@@ -228,7 +230,7 @@ pub fn (mut db DB) get(key []u8, ro ReadOptions) !Lookup {
 		idx := find_file(files, key)
 		if idx < files.len {
 			f := files[idx]
-			if compare_bytes(key, internal_ukey(f.smallest)) >= 0 {
+			if internalkey.compare_bytes(key, internalkey.internal_ukey(f.smallest)) >= 0 {
 				tr := db.table(f.num)!
 				hit := tr.get(ikey)!
 				if hit.found {
@@ -257,7 +259,7 @@ fn find_file(files []TableFile, ukey []u8) int {
 	mut hi := files.len
 	for lo < hi {
 		mid := (lo + hi) / 2
-		if compare_bytes(internal_ukey(files[mid].largest), ukey) < 0 {
+		if internalkey.compare_bytes(internalkey.internal_ukey(files[mid].largest), ukey) < 0 {
 			lo = mid + 1
 		} else {
 			hi = mid
@@ -358,10 +360,12 @@ fn (mut db DB) maybe_compact() ! {
 }
 
 fn overlaps(f TableFile, smallest []u8, largest []u8) bool {
-	if compare_bytes(internal_ukey(f.largest), internal_ukey(smallest)) < 0 {
+	if internalkey.compare_bytes(internalkey.internal_ukey(f.largest),
+		internalkey.internal_ukey(smallest)) < 0 {
 		return false
 	}
-	if compare_bytes(internal_ukey(f.smallest), internal_ukey(largest)) > 0 {
+	if internalkey.compare_bytes(internalkey.internal_ukey(f.smallest),
+		internalkey.internal_ukey(largest)) > 0 {
 		return false
 	}
 	return true
@@ -384,10 +388,10 @@ fn (mut db DB) compact_level(level int) ! {
 	mut smallest := inputs[0].smallest.clone()
 	mut largest := inputs[0].largest.clone()
 	for f in inputs[1..] {
-		if compare_internal(f.smallest, smallest) < 0 {
+		if internalkey.compare_internal(f.smallest, smallest) < 0 {
 			smallest = f.smallest.clone()
 		}
-		if compare_internal(f.largest, largest) > 0 {
+		if internalkey.compare_internal(f.largest, largest) > 0 {
 			largest = f.largest.clone()
 		}
 	}
@@ -401,10 +405,10 @@ fn (mut db DB) compact_level(level int) ! {
 	mut merged_smallest := smallest.clone()
 	mut merged_largest := largest.clone()
 	for f in next_inputs {
-		if compare_internal(f.smallest, merged_smallest) < 0 {
+		if internalkey.compare_internal(f.smallest, merged_smallest) < 0 {
 			merged_smallest = f.smallest.clone()
 		}
-		if compare_internal(f.largest, merged_largest) > 0 {
+		if internalkey.compare_internal(f.largest, merged_largest) > 0 {
 			merged_largest = f.largest.clone()
 		}
 	}
@@ -416,7 +420,7 @@ fn (mut db DB) compact_level(level int) ! {
 		all_entries << tr.all_entries()!
 	}
 	all_entries.sort_with_compare(fn (a &BlockEntry, b &BlockEntry) int {
-		return compare_internal(a.key, b.key)
+		return internalkey.compare_internal(a.key, b.key)
 	})
 	is_base_level := db.no_overlap_deeper(next, merged_smallest, merged_largest)
 	mut edit := VersionEdit{}
@@ -439,8 +443,8 @@ fn (mut db DB) compact_level(level int) ! {
 	mut last_ukey := []u8{}
 	mut has_last := false
 	for e in all_entries {
-		pk := parse_internal_key(e.key)!
-		if has_last && compare_bytes(pk.ukey, last_ukey) == 0 {
+		pk := internalkey.parse_internal_key(e.key)!
+		if has_last && internalkey.compare_bytes(pk.ukey, last_ukey) == 0 {
 			continue
 		}
 		last_ukey = pk.ukey.clone()
